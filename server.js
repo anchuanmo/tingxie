@@ -5,7 +5,7 @@ const tts = require("tencentcloud-sdk-nodejs-tts");
 const TtsClient = tts.tts.v20190823.Client;
 
 const app = express();
-
+app.use(express.static(__dirname));
 // 首页：直接返回同目录下的 index.html
 app.get("/", (req, res) => {
   res.sendFile(path.join(__dirname, "index.html"));
