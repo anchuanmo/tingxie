@@ -7,108 +7,74 @@
   <style>
     body{font-family:system-ui; padding:16px;}
     textarea{width:100%; height:180px; font-size:16px;}
-    button, select{font-size:16px; padding:10px 12px; margin:6px 6px 6px 0;}
-    .current{padding:10px; border:1px solid #ddd; border-radius:10px; margin-top:10px;}
+    button{font-size:22px; padding:16px 24px; margin-top:12px;}
+    select{font-size:16px; padding:6px 8px;}
     .muted{color:#666; font-size:14px; margin-bottom:8px;}
-    .btn-big{font-size:20px; padding:14px 18px;}
+    .status{margin-top:12px; font-size:16px;}
+    .current{margin-top:6px; font-size:20px;}
   </style>
 </head>
 <body>
-  <h2>听写助手（微信打开）</h2>
 
-  <div class="muted">粘贴内容：一行一条。点“开始”后自动逐条朗读，条与条之间停 5 秒。</div>
-  <textarea id="input" placeholder="例如：
+<h2>听写助手（微信打开）</h2>
+
+<div class="muted">
+  粘贴内容：一行一条。点“开始”自动朗读，条与条之间停指定秒数。
+</div>
+
+<textarea id="input" placeholder="例如：
 important
 take a walk
 聚精会神"></textarea>
 
-  <!-- 高级设置：默认收起，避免误触 -->
-  <details style="margin:10px 0;">
-    <summary style="cursor:pointer;">高级设置（一般不用改）</summary>
-    <div style="margin-top:8px;">
-      模式：
-      <select id="lang">
-        <option value="en">英语</option>
-        <option value="zh">语文</option>
-      </select>
+<div style="margin-top:10px;">
+  每条停
+  <select id="gap">
+    <option value="3">3 秒</option>
+    <option value="5" selected>5 秒</option>
+    <option value="8">8 秒</option>
+    <option value="10">10 秒</option>
+  </select>
+</div>
 
-      朗读遍数：
-      <select id="repeat">
-        <option value="1">1遍</option>
-        <option value="2" selected>2遍</option>
-        <option value="3">3遍</option>
-      </select>
+<button id="toggle">开始</button>
 
-      语速：
-      <select id="speed">
-        <option value="slow">慢</option>
-        <option value="normal" selected>正常</option>
-        <option value="fast">快</option>
-      </select>
-    </div>
-  </details>
+<div class="status" id="status">未开始</div>
+<div class="current" id="line"></div>
 
-  <div>
-    <button id="start" class="btn-big">开始</button>
-    <button id="toggle" class="btn-big">暂停</button>
-    <button id="repeatOne" class="btn-big">重复</button>
-    <button id="next" class="btn-big">下一条</button>
-  </div>
-
-  <div class="current">
-    <div id="status">未开始</div>
-    <div id="line" style="font-size:20px; margin-top:6px;"></div>
-  </div>
-
-  <audio id="audio" preload="auto"></audio>
+<audio id="audio" preload="auto"></audio>
 
 <script>
-const STOP_MS = 5000; // 固定 5 秒
 let lines = [];
 let idx = 0;
-let isPaused = false;
+let paused = false;
 let playing = false;
 
-const elInput = document.getElementById('input');
-const elLang = document.getElementById('lang');
-const elRepeat = document.getElementById('repeat');
-const elSpeed = document.getElementById('speed');
-const elStatus = document.getElementById('status');
-const elLine = document.getElementById('line');
-const audio = document.getElementById('audio');
+const elInput = document.getElementById("input");
+const elGap = document.getElementById("gap");
+const btn = document.getElementById("toggle");
+const elStatus = document.getElementById("status");
+const elLine = document.getElementById("line");
+const audio = document.getElementById("audio");
 
-const btnStart = document.getElementById('start');
-const btnToggle = document.getElementById('toggle');
-const btnRepeat = document.getElementById('repeatOne');
-const btnNext = document.getElementById('next');
-
-function cleanLines(text){
-  return text.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+function clean(text){
+  return text.split(/\r?\n/).map(s=>s.trim()).filter(Boolean);
 }
+function sleep(ms){ return new Promise(r=>setTimeout(r,ms)); }
 
-function setUI(){
+function updateUI(){
   if (!lines.length){
     elStatus.textContent = "未开始";
     elLine.textContent = "";
     return;
   }
-  elStatus.textContent = `第 ${Math.min(idx+1, lines.length)} / ${lines.length} 条` + (isPaused ? "（已暂停）" : "");
-  elLine.textContent = lines[idx] ? lines[idx] : "";
+  elStatus.textContent = `第 ${idx+1} / ${lines.length} 条` + (paused ? "（已暂停）" : "");
+  elLine.textContent = lines[idx] || "";
 }
 
-async function fetchTTSUrl(text){
-  const params = new URLSearchParams({
-    text,
-    lang: elLang.value,
-    speed: elSpeed.value
-  });
-  return `/api/tts?${params.toString()}`;
-}
-
-function sleep(ms){ return new Promise(r => setTimeout(r, ms)); }
-
-async function playOnce(url){
-  return new Promise((resolve, reject) => {
+async function playOnce(text){
+  const url = `/api/tts?text=${encodeURIComponent(text)}`;
+  return new Promise((resolve,reject)=>{
     audio.src = url;
     audio.onended = resolve;
     audio.onerror = reject;
@@ -116,91 +82,60 @@ async function playOnce(url){
   });
 }
 
-async function playCurrent(){
-  if (!lines[idx]) return;
-  setUI();
-
-  const text = lines[idx];
-  const repeat = Number(elRepeat.value);
-
-  try{
-    const url = await fetchTTSUrl(text);
-
-    for (let r=0; r<repeat; r++){
-      if (isPaused) return;
-      await playOnce(url);
-      if (repeat > 1 && r < repeat-1) await sleep(800);
-    }
-
-    if (isPaused) return;
-    await sleep(STOP_MS);
-  }catch(e){
-    elStatus.textContent = "播放失败（网络/权限问题）";
-    console.error(e);
-  }
-}
-
 async function loop(){
   playing = true;
   while (idx < lines.length){
-    if (isPaused){ await sleep(200); continue; }
-    await playCurrent();
-    if (!isPaused) idx++;
-    setUI();
+    if (paused){ await sleep(200); continue; }
+
+    updateUI();
+    try{
+      await playOnce(lines[idx]);
+    }catch(e){
+      elStatus.textContent = "播放失败";
+      console.error(e);
+      break;
+    }
+
+    if (paused) continue;
+
+    const gapMs = Number(elGap.value) * 1000;
+    await sleep(gapMs);
+    idx++;
   }
   playing = false;
-  elStatus.textContent = "已结束 ✅";
-  // 结束后解锁输入
+  btn.textContent = "开始";
   elInput.disabled = false;
-  btnStart.textContent = "开始";
+  elStatus.textContent = "已结束 ✅";
 }
 
-btnStart.onclick = async () => {
-  // 如果正在播放，点击“开始”当作“重新开始”
-  lines = cleanLines(elInput.value);
-  if (lines.length === 0){
-    elStatus.textContent = "请先粘贴内容（一行一条）";
+btn.onclick = ()=>{
+  // 开始
+  if (!playing){
+    lines = clean(elInput.value);
+    if (!lines.length){
+      elStatus.textContent = "请先粘贴内容";
+      return;
+    }
+    idx = 0;
+    paused = false;
+    elInput.disabled = true;
+    btn.textContent = "暂停";
+    loop();
     return;
   }
 
-  idx = 0;
-  isPaused = false;
-  btnToggle.textContent = "暂停";
-  setUI();
-
-  // 开始后锁住输入，避免边播边改出错
-  elInput.disabled = true;
-
-  if (!playing) loop();
-};
-
-btnToggle.onclick = () => {
-  isPaused = !isPaused;
-  if (isPaused) {
+  // 暂停 / 继续
+  paused = !paused;
+  if (paused){
     audio.pause();
-    btnToggle.textContent = "继续";
-  } else {
+    btn.textContent = "继续";
+  }else{
     audio.play().catch(()=>{});
-    btnToggle.textContent = "暂停";
+    btn.textContent = "暂停";
   }
-  setUI();
-};
-
-btnNext.onclick = () => {
-  idx = Math.min(idx + 1, lines.length);
-  audio.pause();
-  isPaused = false;
-  btnToggle.textContent = "暂停";
-  setUI();
-};
-
-btnRepeat.onclick = async () => {
-  if (!lines[idx]) return;
-  isPaused = false;
-  btnToggle.textContent = "暂停";
-  audio.pause();
-  await playCurrent();
+  updateUI();
 };
 </script>
+
 </body>
 </html>
