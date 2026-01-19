@@ -105,6 +105,9 @@
       font-size:13px;
       white-space:nowrap;
       height:fit-content;
+      max-width:48vw;
+      overflow:hidden;
+      text-overflow:ellipsis;
     }
     button{
       width:100%;
@@ -131,12 +134,12 @@
 
       <textarea id="input" placeholder="粘贴作业内容（每行一条）
 例如：
-important
-take a walk
-聚精会神"></textarea>
+严肃
+默默
+清晰"></textarea>
 
       <div class="row">
-        <div class="chip" title="条与条之间停留时间">
+        <div class="chip">
           <span>每条停</span>
           <select id="gap">
             <option value="3" selected>3 秒</option>
@@ -153,23 +156,16 @@ take a walk
     </div>
   </div>
 
-<script>
-/**
- * 终极稳定策略（微信里最稳）：
- * 1) 不复用同一个 <audio> 反复 play/pause（微信容易乱）
- * 2) 每次播放都 new Audio(url)，播完销毁
- * 3) 暂停时只“停止等待”，不主动 audio.play()
- * 4) runId 防止并发；按钮防连点 300ms
- */
+  <audio id="audio" playsinline webkit-playsinline preload="auto"></audio>
 
+<script>
 let lines = [];
 let idx = 0;
 let paused = false;
 let playing = false;
-
 let runId = 0;
-let currentAudio = null;
 
+const audio = document.getElementById("audio");
 const elInput = document.getElementById("input");
 const elGap = document.getElementById("gap");
 const btn = document.getElementById("toggle");
@@ -188,15 +184,9 @@ function clickGuard(){
   return true;
 }
 
-function stopCurrentAudio(){
-  try{
-    if (currentAudio){
-      currentAudio.pause();
-      currentAudio.src = "";
-      currentAudio.load?.();
-      currentAudio = null;
-    }
-  }catch(_){}
+function stopAudio(){
+  try{ audio.pause(); }catch(_){}
+  try{ audio.currentTime = 0; }catch(_){}
 }
 
 async function waitUntilResumed(myRunId){
@@ -205,7 +195,7 @@ async function waitUntilResumed(myRunId){
   }
 }
 
-// 暂停时不扣秒（用真实时间）
+// 暂停时不扣秒
 async function waitGapSeconds(myRunId){
   let remaining = Number(elGap.value) * 1000;
   let last = performance.now();
@@ -224,45 +214,58 @@ async function waitGapSeconds(myRunId){
   }
 }
 
+// 播放一次：先 fetch 拿到 blob（这样能看到后端真实错误）
 async function playOnce(text, myRunId){
   if (myRunId !== runId) return;
 
-  // 暂停的话先等
   if (paused){
     await waitUntilResumed(myRunId);
     if (myRunId !== runId) return;
   }
 
-  const url = `/api/tts?text=${encodeURIComponent(text)}`;
-  return new Promise(async (resolve, reject) => {
-    if (myRunId !== runId) return resolve();
+  // ✅ 加随机参数，避开缓存/中间层复用
+  const url = `/api/tts?text=${encodeURIComponent(text)}&_=${Date.now()}`;
 
-    // 每次都新建一个 Audio，微信最稳
-    const a = new Audio(url);
-    currentAudio = a;
+  // 先请求，拿到真实 status
+  const res = await fetch(url, { cache: "no-store" });
 
-    a.onended = () => {
-      if (currentAudio === a) currentAudio = null;
-      resolve();
-    };
-    a.onerror = () => {
-      if (currentAudio === a) currentAudio = null;
-      reject(new Error("audio error"));
-    };
+  if (!res.ok){
+    // 尝试读一点文字出来（很多后端会返回错误信息）
+    let msg = "";
+    try{ msg = await res.text(); }catch(_){}
+    msg = (msg || "").trim().slice(0, 80);
+    throw new Error(`接口失败 ${res.status} ${msg}`);
+  }
 
-    try{
-      await a.play();
-    }catch(e){
-      if (currentAudio === a) currentAudio = null;
-      reject(e);
-    }
-  });
+  const ct = (res.headers.get("content-type") || "").toLowerCase();
+  if (!ct.includes("audio") && !ct.includes("mpeg") && !ct.includes("mp3")){
+    let msg = "";
+    try{ msg = await res.text(); }catch(_){}
+    msg = (msg || "").trim().slice(0, 80);
+    throw new Error(`不是音频 ${ct} ${msg}`);
+  }
+
+  const blob = await res.blob();
+  const objUrl = URL.createObjectURL(blob);
+
+  try{
+    await new Promise((resolve, reject) => {
+      if (myRunId !== runId) return resolve();
+      audio.onended = resolve;
+      audio.onerror = () => reject(new Error("音频播放失败"));
+      audio.src = objUrl;
+      audio.load();
+      audio.play().catch(reject);
+    });
+  } finally {
+    URL.revokeObjectURL(objUrl);
+  }
 }
 
 function finish(){
   playing = false;
   paused = false;
-  stopCurrentAudio();
+  stopAudio();
   btn.textContent = "开始";
   elInput.disabled = false;
   elGap.disabled = false;
@@ -273,13 +276,11 @@ async function loop(myRunId){
   playing = true;
 
   while (myRunId === runId){
-    // 暂停彻底冻结
     if (paused){
       await waitUntilResumed(myRunId);
       if (myRunId !== runId) return;
     }
 
-    // 结束判定：如果暂停中，不立刻结束，等继续后结束
     if (idx >= lines.length){
       if (paused){
         setBadge("已暂停");
@@ -290,36 +291,32 @@ async function loop(myRunId){
     }
 
     try{
-      setBadge(paused ? "已暂停" : "进行中");
+      setBadge("进行中");
 
       // 每条读 2 遍
       await playOnce(lines[idx], myRunId);
       if (myRunId !== runId) return;
-
-      if (paused){ stopCurrentAudio(); continue; }
+      if (paused){ stopAudio(); continue; }
 
       await playOnce(lines[idx], myRunId);
       if (myRunId !== runId) return;
-
-      if (paused){ stopCurrentAudio(); continue; }
+      if (paused){ stopAudio(); continue; }
 
     }catch(e){
       console.error(e);
-      setBadge("出错");
+      setBadge(("出错：" + (e.message || "未知错误")).slice(0, 28));
       playing = false;
       paused = false;
-      stopCurrentAudio();
+      stopAudio();
       btn.textContent = "开始";
       elInput.disabled = false;
       elGap.disabled = false;
       return;
     }
 
-    // 停顿阶段：暂停不扣秒
     await waitGapSeconds(myRunId);
     if (myRunId !== runId) return;
 
-    // 如果停顿结束那一刻你按了暂停：不推进 idx，等继续
     if (paused){
       await waitUntilResumed(myRunId);
       if (myRunId !== runId) return;
@@ -336,14 +333,12 @@ async function loop(myRunId){
 btn.onclick = ()=>{
   if (!clickGuard()) return;
 
-  // 开始
   if (!playing){
     lines = clean(elInput.value);
     if (!lines.length){
       setBadge("请先粘贴内容");
       return;
     }
-
     idx = 0;
     paused = false;
 
@@ -359,16 +354,14 @@ btn.onclick = ()=>{
     return;
   }
 
-  // 暂停 / 继续
   paused = !paused;
   if (paused){
-    stopCurrentAudio(); // ✅ 暂停直接停止音频（不去复用 play/pause）
+    stopAudio();
     btn.textContent = "继续";
     setBadge("已暂停");
   }else{
     btn.textContent = "暂停";
     setBadge("进行中");
-    // ✅ 注意：继续时不主动 play()，由 loop 自己推进，避免微信抖动
   }
 };
 </script>
