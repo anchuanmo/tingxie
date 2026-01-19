@@ -32,17 +32,8 @@
       box-shadow: var(--shadow);
       padding:16px;
     }
-    h1{
-      font-size:18px;
-      margin:0 0 6px;
-      letter-spacing:.2px;
-    }
-    .sub{
-      color:var(--muted);
-      font-size:13px;
-      line-height:1.4;
-      margin-bottom:12px;
-    }
+    h1{font-size:18px; margin:0 0 6px; letter-spacing:.2px;}
+    .sub{color:var(--muted); font-size:13px; line-height:1.4; margin-bottom:12px;}
     textarea{
       width:100%;
       height:190px;
@@ -108,7 +99,6 @@
       margin-top:12px;
     }
     button:active{transform: translateY(1px);}
-    button[disabled]{opacity:.55; cursor:not-allowed;}
     .status{
       margin-top:14px;
       padding-top:12px;
@@ -118,17 +108,8 @@
       justify-content:space-between;
       gap:10px;
     }
-    .meta{
-      color:var(--muted);
-      font-size:13px;
-      line-height:1.4;
-    }
-    .line{
-      font-size:22px;
-      font-weight:700;
-      margin-top:4px;
-      word-break: break-word;
-    }
+    .meta{color:var(--muted); font-size:13px; line-height:1.4;}
+    .line{font-size:22px; font-weight:700; margin-top:4px; word-break: break-word;}
     .badge{
       padding:8px 10px;
       border-radius:999px;
@@ -139,12 +120,7 @@
       white-space:nowrap;
       height:fit-content;
     }
-    .hint{
-      margin-top:10px;
-      color:rgba(255,255,255,.55);
-      font-size:12px;
-      line-height:1.4;
-    }
+    .hint{margin-top:10px; color:rgba(255,255,255,.55); font-size:12px; line-height:1.4;}
   </style>
 </head>
 <body>
@@ -189,10 +165,21 @@ take a walk
   <audio id="audio" preload="auto"></audio>
 
 <script>
+/**
+ * 这版修复点（对应你说的“暂停几次就变结束”）：
+ * 1) 用 runId 防止多次点击导致多个循环并发
+ * 2) 停顿计时用“真实经过时间”，暂停时不扣秒（不会偷偷走完）
+ * 3) 即使最后一条已经播完，只要你按了暂停，就不会立刻显示“已结束”；
+ *    必须你按“继续”，才会把最后一步走完并结束。
+ */
+
 let lines = [];
 let idx = 0;
 let paused = false;
 let playing = false;
+
+let runId = 0;          // 每次开始 +1，旧循环自动失效
+let finishArmed = false; // 最后一条完成后，如果用户暂停，延迟结束
 
 const elInput = document.getElementById("input");
 const elGap = document.getElementById("gap");
@@ -207,109 +194,185 @@ function clean(text){
 }
 function sleep(ms){ return new Promise(r=>setTimeout(r,ms)); }
 
+function setBadge(text){ elBadge.textContent = text; }
+function setStatus(text){ elStatus.textContent = text; }
+
 function updateUI(){
   if (!lines.length || idx >= lines.length){
     elLine.textContent = "";
-    elBadge.textContent = playing ? "进行中" : "未开始";
     return;
   }
-  elBadge.textContent = paused ? "已暂停" : "进行中";
-  elStatus.textContent = `第 ${idx+1} / ${lines.length} 条` + (paused ? "（暂停）" : "");
+  setBadge(paused ? "已暂停" : "进行中");
+  setStatus(`第 ${idx+1} / ${lines.length} 条` + (paused ? "（暂停）" : ""));
   elLine.textContent = lines[idx];
 }
 
-async function playOnce(text){
+async function playOnce(text, myRunId){
   const url = `/api/tts?text=${encodeURIComponent(text)}`;
   return new Promise((resolve,reject)=>{
+    if (myRunId !== runId) return resolve(); // 旧任务直接结束
     audio.src = url;
-    audio.onended = resolve;
-    audio.onerror = reject;
+    audio.onended = () => resolve();
+    audio.onerror = () => reject(new Error("audio error"));
     audio.play().catch(reject);
   });
 }
 
-async function waitGap(){
-  let remaining = Number(elGap.value) * 1000;
-  while (remaining > 0){
-    if (paused){
-      await sleep(200);
-      continue;
-    }
-    const step = Math.min(200, remaining);
-    await sleep(step);
-    remaining -= step;
+// 暂停等待（带 runId 保护）
+async function waitUntilResumed(myRunId){
+  while (paused && myRunId === runId){
+    await sleep(120);
   }
 }
 
-async function loop(){
+// 停顿计时：用真实时间扣减；暂停期间不扣（不会“偷偷走完”）
+async function waitGapSeconds(myRunId){
+  let remaining = Number(elGap.value) * 1000;
+  let last = performance.now();
+
+  while (remaining > 0 && myRunId === runId){
+    if (paused){
+      // 暂停时，冻结计时，并不断刷新 last，避免恢复时瞬间扣一大段
+      last = performance.now();
+      await sleep(120);
+      continue;
+    }
+    await sleep(80);
+    const now = performance.now();
+    const delta = now - last;
+    last = now;
+    // 只有在未暂停的时间段才扣减
+    remaining -= delta;
+  }
+}
+
+// 统一结束 UI
+function finish(){
+  playing = false;
+  paused = false;
+  finishArmed = false;
+  btn.textContent = "开始";
+  elInput.disabled = false;
+  elGap.disabled = false;
+  setBadge("完成");
+  setStatus("已结束 ✅");
+  elLine.textContent = "";
+}
+
+async function loop(myRunId){
   playing = true;
+  finishArmed = false;
 
-  while (true){
-    if (idx >= lines.length) break;
+  while (myRunId === runId){
+    if (idx >= lines.length){
+      // 走到尽头：如果用户此刻按了暂停（常见在最后一条），不立刻结束，等他按继续
+      if (paused){
+        finishArmed = true;
+        setBadge("已暂停");
+        setStatus("最后一条已完成（暂停中）");
+        await waitUntilResumed(myRunId);
+        if (myRunId !== runId) return;
+      }
+      break;
+    }
 
-    while (paused){
-      await sleep(200);
+    // 暂停就彻底停住（不播、不走秒、不跳条）
+    if (paused){
+      await waitUntilResumed(myRunId);
+      if (myRunId !== runId) return;
     }
 
     updateUI();
 
     try{
-      // 读 2 遍
-      await playOnce(lines[idx]);
-      if (paused) continue;
-      await playOnce(lines[idx]);
+      // 每条读 2 遍
+      await playOnce(lines[idx], myRunId);
+      if (myRunId !== runId) return;
+
+      if (paused){
+        audio.pause();
+        continue;
+      }
+
+      await playOnce(lines[idx], myRunId);
+      if (myRunId !== runId) return;
+
+      if (paused){
+        audio.pause();
+        continue;
+      }
     }catch(e){
-      elStatus.textContent = "播放失败（网络或权限问题）";
-      elBadge.textContent = "出错";
+      setBadge("出错");
+      setStatus("播放失败（网络或权限问题）");
       console.error(e);
-      break;
+      // 出错也别自动乱跳
+      playing = false;
+      btn.textContent = "开始";
+      elInput.disabled = false;
+      elGap.disabled = false;
+      return;
     }
 
-    await waitGap();
+    // 停顿阶段：暂停时不扣秒
+    await waitGapSeconds(myRunId);
+    if (myRunId !== runId) return;
+
+    // 如果停顿结束这一刻用户正好按了暂停：不推进 idx，先等继续
+    if (paused){
+      await waitUntilResumed(myRunId);
+      if (myRunId !== runId) return;
+    }
+
     idx++;
   }
 
-  playing = false;
-  paused = false;
-  btn.textContent = "开始";
-  elInput.disabled = false;
-  elStatus.textContent = "已结束 ✅";
-  elBadge.textContent = "完成";
-  elLine.textContent = "";
+  // 正常结束
+  if (myRunId === runId){
+    finish();
+  }
 }
 
 btn.onclick = ()=>{
+  // 开始（或重新开始）
   if (!playing){
     lines = clean(elInput.value);
     if (!lines.length){
-      elStatus.textContent = "请先粘贴内容（一行一条）";
-      elBadge.textContent = "等待";
+      setBadge("等待");
+      setStatus("请先粘贴内容（一行一条）");
       return;
     }
     idx = 0;
     paused = false;
+    runId++;                // 新的一轮
+    const myRunId = runId;
+
     elInput.disabled = true;
-    elGap.disabled = true; // 播放中锁住，避免误触
+    elGap.disabled = true;  // 播放中锁住，避免误触
     btn.textContent = "暂停";
-    elBadge.textContent = "进行中";
+    setBadge("进行中");
     updateUI();
-    loop().finally(()=>{ elGap.disabled = false; });
+    loop(myRunId);
     return;
   }
 
+  // 暂停 / 继续
   paused = !paused;
   if (paused){
     audio.pause();
     btn.textContent = "继续";
-    elBadge.textContent = "已暂停";
+    setBadge("已暂停");
+    // 如果刚好最后一条已经完成，给出更符合直觉的状态
+    if (idx >= lines.length){
+      setStatus("最后一条已完成（暂停中）");
+    }
   }else{
+    // 继续：如果之前是“最后一条完成后暂停”，此时允许结束流程继续
     audio.play().catch(()=>{});
     btn.textContent = "暂停";
-    elBadge.textContent = "进行中";
+    setBadge("进行中");
   }
   updateUI();
 };
 </script>
-
 </body>
 </html>
