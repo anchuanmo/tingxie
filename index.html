@@ -30,8 +30,8 @@ take a walk
 <div style="margin-top:10px;">
   每条停
   <select id="gap">
-    <option value="3">3 秒</option>
-    <option value="5" selected>5 秒</option>
+    <option value="3" selected>3 秒</option>
+    <option value="5">5 秒</option>
     <option value="8">8 秒</option>
     <option value="10">10 秒</option>
   </select>
@@ -63,14 +63,13 @@ function clean(text){
 function sleep(ms){ return new Promise(r=>setTimeout(r,ms)); }
 
 function updateUI(){
-  if (!lines.length){
-    elStatus.textContent = "未开始";
+  if (!lines.length || idx >= lines.length){
     elLine.textContent = "";
     return;
   }
   elStatus.textContent =
     `第 ${idx+1} / ${lines.length} 条` + (paused ? "（已暂停）" : "");
-  elLine.textContent = lines[idx] || "";
+  elLine.textContent = lines[idx];
 }
 
 async function playOnce(text){
@@ -83,11 +82,29 @@ async function playOnce(text){
   });
 }
 
+async function waitGap(){
+  let remaining = Number(elGap.value) * 1000;
+  while (remaining > 0){
+    if (paused){
+      await sleep(200);
+      continue;
+    }
+    const step = Math.min(200, remaining);
+    await sleep(step);
+    remaining -= step;
+  }
+}
+
 async function loop(){
   playing = true;
 
-  while (idx < lines.length){
-    // 如果暂停，彻底停住，不走任何逻辑
+  while (true){
+    // 如果全部完成，明确结束
+    if (idx >= lines.length){
+      break;
+    }
+
+    // 暂停时，彻底冻结
     while (paused){
       await sleep(200);
     }
@@ -97,7 +114,6 @@ async function loop(){
     try{
       // 第 1 遍
       await playOnce(lines[idx]);
-      // 如果播放中被暂停，回到循环顶部等待
       if (paused) continue;
 
       // 第 2 遍
@@ -108,22 +124,16 @@ async function loop(){
       break;
     }
 
-    // 停顿阶段：暂停时不计时
-    let remaining = Number(elGap.value) * 1000;
-    while (remaining > 0){
-      if (paused){
-        await sleep(200);
-        continue;
-      }
-      const step = Math.min(200, remaining);
-      await sleep(step);
-      remaining -= step;
-    }
+    // 停顿阶段（最后一条也必须完整等完）
+    await waitGap();
 
+    // 明确进入下一条
     idx++;
   }
 
+  // 只有在 while 正常退出后，才允许结束
   playing = false;
+  paused = false;
   btn.textContent = "开始";
   elInput.disabled = false;
   elStatus.textContent = "已结束 ✅";
