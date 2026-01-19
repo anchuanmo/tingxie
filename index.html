@@ -85,15 +85,21 @@ async function playOnce(text){
 
 async function loop(){
   playing = true;
+
   while (idx < lines.length){
-    if (paused){ await sleep(200); continue; }
+    // 如果暂停，彻底停住，不走任何逻辑
+    while (paused){
+      await sleep(200);
+    }
 
     updateUI();
 
     try{
       // 第 1 遍
       await playOnce(lines[idx]);
+      // 如果播放中被暂停，回到循环顶部等待
       if (paused) continue;
+
       // 第 2 遍
       await playOnce(lines[idx]);
     }catch(e){
@@ -102,10 +108,18 @@ async function loop(){
       break;
     }
 
-    if (paused) continue;
+    // 停顿阶段：暂停时不计时
+    let remaining = Number(elGap.value) * 1000;
+    while (remaining > 0){
+      if (paused){
+        await sleep(200);
+        continue;
+      }
+      const step = Math.min(200, remaining);
+      await sleep(step);
+      remaining -= step;
+    }
 
-    const gapMs = Number(elGap.value) * 1000;
-    await sleep(gapMs);
     idx++;
   }
 
