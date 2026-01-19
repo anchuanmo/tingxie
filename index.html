@@ -7,7 +7,6 @@
   <style>
     :root{
       --bg:#0b1220;
-      --card:#0f1a2e;
       --muted:rgba(255,255,255,.72);
       --text:rgba(255,255,255,.92);
       --line:rgba(255,255,255,.10);
@@ -15,6 +14,7 @@
       --btnText:#0b1220;
       --shadow: 0 10px 30px rgba(0,0,0,.35);
       --r:16px;
+      --yellow:#ffd84d;
     }
     *{box-sizing:border-box;}
     body{
@@ -33,19 +33,22 @@
       padding:16px;
     }
     h1{
-      font-size:18px;
-      margin:0 0 6px;
-      letter-spacing:.2px;
+      font-size:22px;
+      margin:0 0 10px;
+      text-align:center;          /* ✅ 标题居中 */
+      color:var(--yellow);        /* ✅ 黄色 */
+      letter-spacing:.5px;
     }
     .sub{
       color:var(--muted);
       font-size:13px;
       line-height:1.4;
       margin-bottom:12px;
+      text-align:center;
     }
     textarea{
       width:100%;
-      height:190px;
+      height:220px;
       resize:vertical;
       border-radius:14px;
       border:1px solid var(--line);
@@ -93,42 +96,6 @@
       border-top:6px solid rgba(255,255,255,.6);
       margin-left:-6px;
     }
-    button{
-      width:100%;
-      border:none;
-      border-radius:14px;
-      padding:16px 18px;
-      font-size:20px;
-      font-weight:700;
-      cursor:pointer;
-      background: var(--btn);
-      color: var(--btnText);
-      box-shadow: 0 10px 25px rgba(0,0,0,.25);
-      transition: transform .05s ease;
-      margin-top:12px;
-    }
-    button:active{transform: translateY(1px);}
-    button[disabled]{opacity:.55; cursor:not-allowed;}
-    .status{
-      margin-top:14px;
-      padding-top:12px;
-      border-top:1px solid var(--line);
-      display:flex;
-      align-items:flex-start;
-      justify-content:space-between;
-      gap:10px;
-    }
-    .meta{
-      color:var(--muted);
-      font-size:13px;
-      line-height:1.4;
-    }
-    .line{
-      font-size:22px;
-      font-weight:700;
-      margin-top:4px;
-      word-break: break-word;
-    }
     .badge{
       padding:8px 10px;
       border-radius:999px;
@@ -139,19 +106,28 @@
       white-space:nowrap;
       height:fit-content;
     }
-    .hint{
-      margin-top:10px;
-      color:rgba(255,255,255,.55);
-      font-size:12px;
-      line-height:1.4;
+    button{
+      width:100%;
+      border:none;
+      border-radius:14px;
+      padding:18px 18px;
+      font-size:22px;
+      font-weight:800;
+      cursor:pointer;
+      background: var(--btn);
+      color: var(--btnText);
+      box-shadow: 0 10px 25px rgba(0,0,0,.25);
+      transition: transform .05s ease;
+      margin-top:14px;
     }
+    button:active{transform: translateY(1px);}
   </style>
 </head>
 <body>
   <div class="wrap">
     <div class="card">
       <h1>听写助手</h1>
-      <div class="sub">一行一条。每条自动读 <b>2 遍</b>，再停指定秒数。只有一个按钮：开始 / 暂停 / 继续。</div>
+      <div class="sub">一行一条。每条自动读 2 遍，再停指定秒数。只有一个按钮：开始 / 暂停 / 继续。</div>
 
       <textarea id="input" placeholder="粘贴作业内容（每行一条）
 例如：
@@ -174,15 +150,6 @@ take a walk
       </div>
 
       <button id="toggle">开始</button>
-
-      <div class="status">
-        <div>
-          <div class="meta" id="status">准备就绪</div>
-          <div class="line" id="line"></div>
-        </div>
-      </div>
-
-      <div class="hint">提示：在微信里第一次必须点“开始”才能播放声音。</div>
     </div>
   </div>
 
@@ -194,11 +161,11 @@ let idx = 0;
 let paused = false;
 let playing = false;
 
+let runId = 0; // 防止并发循环
+
 const elInput = document.getElementById("input");
 const elGap = document.getElementById("gap");
 const btn = document.getElementById("toggle");
-const elStatus = document.getElementById("status");
-const elLine = document.getElementById("line");
 const elBadge = document.getElementById("badge");
 const audio = document.getElementById("audio");
 
@@ -207,109 +174,148 @@ function clean(text){
 }
 function sleep(ms){ return new Promise(r=>setTimeout(r,ms)); }
 
-function updateUI(){
-  if (!lines.length || idx >= lines.length){
-    elLine.textContent = "";
-    elBadge.textContent = playing ? "进行中" : "未开始";
-    return;
-  }
-  elBadge.textContent = paused ? "已暂停" : "进行中";
-  elStatus.textContent = `第 ${idx+1} / ${lines.length} 条` + (paused ? "（暂停）" : "");
-  elLine.textContent = lines[idx];
-}
+function setBadge(text){ elBadge.textContent = text; }
 
-async function playOnce(text){
+async function playOnce(text, myRunId){
   const url = `/api/tts?text=${encodeURIComponent(text)}`;
   return new Promise((resolve,reject)=>{
+    if (myRunId !== runId) return resolve();
     audio.src = url;
-    audio.onended = resolve;
-    audio.onerror = reject;
+    audio.onended = () => resolve();
+    audio.onerror = () => reject(new Error("audio error"));
     audio.play().catch(reject);
   });
 }
 
-async function waitGap(){
-  let remaining = Number(elGap.value) * 1000;
-  while (remaining > 0){
-    if (paused){
-      await sleep(200);
-      continue;
-    }
-    const step = Math.min(200, remaining);
-    await sleep(step);
-    remaining -= step;
+async function waitUntilResumed(myRunId){
+  while (paused && myRunId === runId){
+    await sleep(120);
   }
 }
 
-async function loop(){
-  playing = true;
+// 停顿计时：暂停时不扣秒
+async function waitGapSeconds(myRunId){
+  let remaining = Number(elGap.value) * 1000;
+  let last = performance.now();
 
-  while (true){
-    if (idx >= lines.length) break;
-
-    while (paused){
-      await sleep(200);
+  while (remaining > 0 && myRunId === runId){
+    if (paused){
+      last = performance.now();
+      await sleep(120);
+      continue;
     }
-
-    updateUI();
-
-    try{
-      // 读 2 遍
-      await playOnce(lines[idx]);
-      if (paused) continue;
-      await playOnce(lines[idx]);
-    }catch(e){
-      elStatus.textContent = "播放失败（网络或权限问题）";
-      elBadge.textContent = "出错";
-      console.error(e);
-      break;
-    }
-
-    await waitGap();
-    idx++;
+    await sleep(80);
+    const now = performance.now();
+    const delta = now - last;
+    last = now;
+    remaining -= delta;
   }
+}
 
+function finish(){
   playing = false;
   paused = false;
   btn.textContent = "开始";
   elInput.disabled = false;
-  elStatus.textContent = "已结束 ✅";
-  elBadge.textContent = "完成";
-  elLine.textContent = "";
+  elGap.disabled = false;
+  setBadge("完成");
+}
+
+async function loop(myRunId){
+  playing = true;
+
+  while (myRunId === runId){
+    if (idx >= lines.length){
+      if (paused){
+        setBadge("已暂停");
+        await waitUntilResumed(myRunId);
+        if (myRunId !== runId) return;
+      }
+      break;
+    }
+
+    if (paused){
+      await waitUntilResumed(myRunId);
+      if (myRunId !== runId) return;
+    }
+
+    try{
+      // 每条读 2 遍
+      await playOnce(lines[idx], myRunId);
+      if (myRunId !== runId) return;
+
+      if (paused){
+        audio.pause();
+        continue;
+      }
+
+      await playOnce(lines[idx], myRunId);
+      if (myRunId !== runId) return;
+
+      if (paused){
+        audio.pause();
+        continue;
+      }
+    }catch(e){
+      setBadge("出错");
+      playing = false;
+      btn.textContent = "开始";
+      elInput.disabled = false;
+      elGap.disabled = false;
+      console.error(e);
+      return;
+    }
+
+    await waitGapSeconds(myRunId);
+    if (myRunId !== runId) return;
+
+    if (paused){
+      await waitUntilResumed(myRunId);
+      if (myRunId !== runId) return;
+    }
+
+    idx++;
+  }
+
+  if (myRunId === runId){
+    finish();
+  }
 }
 
 btn.onclick = ()=>{
+  // 开始
   if (!playing){
     lines = clean(elInput.value);
     if (!lines.length){
-      elStatus.textContent = "请先粘贴内容（一行一条）";
-      elBadge.textContent = "等待";
+      setBadge("请先粘贴内容");
       return;
     }
     idx = 0;
     paused = false;
+
+    runId++;
+    const myRunId = runId;
+
     elInput.disabled = true;
-    elGap.disabled = true; // 播放中锁住，避免误触
+    elGap.disabled = true;
     btn.textContent = "暂停";
-    elBadge.textContent = "进行中";
-    updateUI();
-    loop().finally(()=>{ elGap.disabled = false; });
+    setBadge("进行中");
+    loop(myRunId);
     return;
   }
 
+  // 暂停 / 继续
   paused = !paused;
   if (paused){
     audio.pause();
     btn.textContent = "继续";
-    elBadge.textContent = "已暂停";
+    setBadge("已暂停");
   }else{
     audio.play().catch(()=>{});
     btn.textContent = "暂停";
-    elBadge.textContent = "进行中";
+    setBadge("进行中");
   }
-  updateUI();
 };
 </script>
-
 </body>
 </html>
