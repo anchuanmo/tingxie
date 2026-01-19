@@ -5,44 +5,188 @@
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>听写助手</title>
   <style>
-    body{font-family:system-ui; padding:16px;}
-    textarea{width:100%; height:180px; font-size:16px;}
-    button{font-size:22px; padding:16px 24px; margin-top:14px;}
-    select{font-size:16px; padding:6px 8px;}
-    .muted{color:#666; font-size:14px; margin-bottom:8px;}
-    .status{margin-top:12px; font-size:16px;}
-    .current{margin-top:6px; font-size:20px;}
+    :root{
+      --bg:#0b1220;
+      --card:#0f1a2e;
+      --muted:rgba(255,255,255,.72);
+      --text:rgba(255,255,255,.92);
+      --line:rgba(255,255,255,.10);
+      --btn:#ffffff;
+      --btnText:#0b1220;
+      --shadow: 0 10px 30px rgba(0,0,0,.35);
+      --r:16px;
+    }
+    *{box-sizing:border-box;}
+    body{
+      margin:0;
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial;
+      background: radial-gradient(1200px 700px at 20% 10%, #1a2b55 0%, var(--bg) 45%) fixed;
+      color:var(--text);
+      padding:18px;
+    }
+    .wrap{max-width:720px; margin:0 auto;}
+    .card{
+      background: linear-gradient(180deg, rgba(255,255,255,.06), rgba(255,255,255,.03));
+      border:1px solid var(--line);
+      border-radius: var(--r);
+      box-shadow: var(--shadow);
+      padding:16px;
+    }
+    h1{
+      font-size:18px;
+      margin:0 0 6px;
+      letter-spacing:.2px;
+    }
+    .sub{
+      color:var(--muted);
+      font-size:13px;
+      line-height:1.4;
+      margin-bottom:12px;
+    }
+    textarea{
+      width:100%;
+      height:190px;
+      resize:vertical;
+      border-radius:14px;
+      border:1px solid var(--line);
+      background: rgba(255,255,255,.03);
+      color: var(--text);
+      padding:12px 12px;
+      outline:none;
+      font-size:16px;
+      line-height:1.45;
+    }
+    textarea::placeholder{color:rgba(255,255,255,.45);}
+    .row{
+      display:flex;
+      gap:12px;
+      align-items:center;
+      justify-content:space-between;
+      margin-top:12px;
+      flex-wrap:wrap;
+    }
+    .chip{
+      display:flex;
+      align-items:center;
+      gap:8px;
+      padding:10px 12px;
+      border-radius:999px;
+      border:1px solid var(--line);
+      background: rgba(255,255,255,.03);
+      color:var(--muted);
+      font-size:14px;
+    }
+    select{
+      border:none;
+      outline:none;
+      background: transparent;
+      color: var(--text);
+      font-size:14px;
+      appearance:none;
+      padding-right:18px;
+      cursor:pointer;
+    }
+    .chip .arrow{
+      width:0; height:0;
+      border-left:5px solid transparent;
+      border-right:5px solid transparent;
+      border-top:6px solid rgba(255,255,255,.6);
+      margin-left:-6px;
+    }
+    button{
+      width:100%;
+      border:none;
+      border-radius:14px;
+      padding:16px 18px;
+      font-size:20px;
+      font-weight:700;
+      cursor:pointer;
+      background: var(--btn);
+      color: var(--btnText);
+      box-shadow: 0 10px 25px rgba(0,0,0,.25);
+      transition: transform .05s ease;
+      margin-top:12px;
+    }
+    button:active{transform: translateY(1px);}
+    button[disabled]{opacity:.55; cursor:not-allowed;}
+    .status{
+      margin-top:14px;
+      padding-top:12px;
+      border-top:1px solid var(--line);
+      display:flex;
+      align-items:flex-start;
+      justify-content:space-between;
+      gap:10px;
+    }
+    .meta{
+      color:var(--muted);
+      font-size:13px;
+      line-height:1.4;
+    }
+    .line{
+      font-size:22px;
+      font-weight:700;
+      margin-top:4px;
+      word-break: break-word;
+    }
+    .badge{
+      padding:8px 10px;
+      border-radius:999px;
+      border:1px solid var(--line);
+      background: rgba(255,255,255,.03);
+      color:var(--muted);
+      font-size:13px;
+      white-space:nowrap;
+      height:fit-content;
+    }
+    .hint{
+      margin-top:10px;
+      color:rgba(255,255,255,.55);
+      font-size:12px;
+      line-height:1.4;
+    }
   </style>
 </head>
 <body>
+  <div class="wrap">
+    <div class="card">
+      <h1>听写助手</h1>
+      <div class="sub">一行一条。每条自动读 <b>2 遍</b>，再停指定秒数。只有一个按钮：开始 / 暂停 / 继续。</div>
 
-<h2>听写助手（微信打开）</h2>
-
-<div class="muted">
-  一行一条。每条自动读 <b>2 遍</b>，再停指定秒数。
-</div>
-
-<textarea id="input" placeholder="例如：
+      <textarea id="input" placeholder="粘贴作业内容（每行一条）
+例如：
 important
 take a walk
 聚精会神"></textarea>
 
-<div style="margin-top:10px;">
-  每条停
-  <select id="gap">
-    <option value="3" selected>3 秒</option>
-    <option value="5">5 秒</option>
-    <option value="8">8 秒</option>
-    <option value="10">10 秒</option>
-  </select>
-</div>
+      <div class="row">
+        <div class="chip" title="条与条之间停留时间">
+          <span>每条停</span>
+          <select id="gap">
+            <option value="3" selected>3 秒</option>
+            <option value="5">5 秒</option>
+            <option value="8">8 秒</option>
+            <option value="10">10 秒</option>
+          </select>
+          <span class="arrow"></span>
+        </div>
+        <div class="badge" id="badge">未开始</div>
+      </div>
 
-<button id="toggle">开始</button>
+      <button id="toggle">开始</button>
 
-<div class="status" id="status">未开始</div>
-<div class="current" id="line"></div>
+      <div class="status">
+        <div>
+          <div class="meta" id="status">准备就绪</div>
+          <div class="line" id="line"></div>
+        </div>
+      </div>
 
-<audio id="audio" preload="auto"></audio>
+      <div class="hint">提示：在微信里第一次必须点“开始”才能播放声音。</div>
+    </div>
+  </div>
+
+  <audio id="audio" preload="auto"></audio>
 
 <script>
 let lines = [];
@@ -55,6 +199,7 @@ const elGap = document.getElementById("gap");
 const btn = document.getElementById("toggle");
 const elStatus = document.getElementById("status");
 const elLine = document.getElementById("line");
+const elBadge = document.getElementById("badge");
 const audio = document.getElementById("audio");
 
 function clean(text){
@@ -65,10 +210,11 @@ function sleep(ms){ return new Promise(r=>setTimeout(r,ms)); }
 function updateUI(){
   if (!lines.length || idx >= lines.length){
     elLine.textContent = "";
+    elBadge.textContent = playing ? "进行中" : "未开始";
     return;
   }
-  elStatus.textContent =
-    `第 ${idx+1} / ${lines.length} 条` + (paused ? "（已暂停）" : "");
+  elBadge.textContent = paused ? "已暂停" : "进行中";
+  elStatus.textContent = `第 ${idx+1} / ${lines.length} 条` + (paused ? "（暂停）" : "");
   elLine.textContent = lines[idx];
 }
 
@@ -99,12 +245,8 @@ async function loop(){
   playing = true;
 
   while (true){
-    // 如果全部完成，明确结束
-    if (idx >= lines.length){
-      break;
-    }
+    if (idx >= lines.length) break;
 
-    // 暂停时，彻底冻结
     while (paused){
       await sleep(200);
     }
@@ -112,57 +254,58 @@ async function loop(){
     updateUI();
 
     try{
-      // 第 1 遍
+      // 读 2 遍
       await playOnce(lines[idx]);
       if (paused) continue;
-
-      // 第 2 遍
       await playOnce(lines[idx]);
     }catch(e){
-      elStatus.textContent = "播放失败";
+      elStatus.textContent = "播放失败（网络或权限问题）";
+      elBadge.textContent = "出错";
       console.error(e);
       break;
     }
 
-    // 停顿阶段（最后一条也必须完整等完）
     await waitGap();
-
-    // 明确进入下一条
     idx++;
   }
 
-  // 只有在 while 正常退出后，才允许结束
   playing = false;
   paused = false;
   btn.textContent = "开始";
   elInput.disabled = false;
   elStatus.textContent = "已结束 ✅";
+  elBadge.textContent = "完成";
+  elLine.textContent = "";
 }
 
 btn.onclick = ()=>{
-  // 开始
   if (!playing){
     lines = clean(elInput.value);
     if (!lines.length){
-      elStatus.textContent = "请先粘贴内容";
+      elStatus.textContent = "请先粘贴内容（一行一条）";
+      elBadge.textContent = "等待";
       return;
     }
     idx = 0;
     paused = false;
     elInput.disabled = true;
+    elGap.disabled = true; // 播放中锁住，避免误触
     btn.textContent = "暂停";
-    loop();
+    elBadge.textContent = "进行中";
+    updateUI();
+    loop().finally(()=>{ elGap.disabled = false; });
     return;
   }
 
-  // 暂停 / 继续
   paused = !paused;
   if (paused){
     audio.pause();
     btn.textContent = "继续";
+    elBadge.textContent = "已暂停";
   }else{
     audio.play().catch(()=>{});
     btn.textContent = "暂停";
+    elBadge.textContent = "进行中";
   }
   updateUI();
 };
