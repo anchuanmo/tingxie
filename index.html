@@ -1,0 +1,140 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>听写助手</title>
+  <style>
+    body{font-family:system-ui; padding:16px;}
+    textarea{width:100%; height:160px; font-size:16px;}
+    button, select{font-size:16px; padding:10px 12px; margin:6px 6px 6px 0;}
+    .box{padding:10px; border:1px solid #ddd; border-radius:10px; margin-top:10px;}
+    .muted{color:#666; font-size:14px;}
+  </style>
+</head>
+<body>
+  <h2>听写助手（微信打开）</h2>
+  <div class="muted">一行一条；停顿固定 5 秒；点“开始”后会自动一条条读。</div>
+
+  <textarea id="input" placeholder="例如：
+important
+take a walk
+聚精会神"></textarea>
+
+  <div>
+    类型：
+    <select id="type">
+      <option value="en">英语</option>
+      <option value="zh">语文</option>
+    </select>
+
+    读几遍：
+    <select id="times">
+      <option value="1">1遍</option>
+      <option value="2" selected>2遍</option>
+      <option value="3">3遍</option>
+    </select>
+
+    语速：
+    <select id="speed">
+      <option value="slow">慢</option>
+      <option value="normal" selected>正常</option>
+      <option value="fast">快</option>
+    </select>
+  </div>
+
+  <div>
+    <button id="start">开始</button>
+    <button id="pause">暂停</button>
+    <button id="resume">继续</button>
+    <button id="repeatOne">重复当前</button>
+    <button id="next">下一条</button>
+  </div>
+
+  <div class="box">
+    <div id="status">未开始</div>
+    <div id="current" style="font-size:20px;margin-top:6px;"></div>
+  </div>
+
+  <audio id="audio" preload="auto"></audio>
+
+<script>
+const STOP_MS = 5000; // 固定 5 秒
+let list = [];
+let i = 0;
+let paused = false;
+let running = false;
+
+const input = document.getElementById('input');
+const type = document.getElementById('type');
+const times = document.getElementById('times');
+const speed = document.getElementById('speed');
+const status = document.getElementById('status');
+const current = document.getElementById('current');
+const audio = document.getElementById('audio');
+
+function clean(text){
+  return text.split(/\r?\n/).map(s=>s.trim()).filter(Boolean);
+}
+function ui(){
+  if (!list.length){ status.textContent="未开始"; current.textContent=""; return; }
+  status.textContent = `第 ${Math.min(i+1, list.length)} / ${list.length} 条` + (paused ? "（暂停）" : "");
+  current.textContent = list[i] || "";
+}
+function sleep(ms){ return new Promise(r=>setTimeout(r, ms)); }
+
+async function playUrl(url){
+  return new Promise((resolve, reject)=>{
+    audio.src = url;
+    audio.onended = resolve;
+    audio.onerror = reject;
+    audio.play().catch(reject);
+  });
+}
+
+async function oneItem(){
+  const text = list[i];
+  ui();
+
+  const url = `/api/tts?text=${encodeURIComponent(text)}&type=${type.value}&speed=${speed.value}`;
+  const n = Number(times.value);
+
+  for (let k=0;k<n;k++){
+    if (paused) return;
+    await playUrl(url);
+    if (n>1 && k<n-1) await sleep(800);
+  }
+  if (paused) return;
+  await sleep(STOP_MS);
+}
+
+async function loop(){
+  running = true;
+  while (i < list.length){
+    if (paused){ await sleep(200); continue; }
+    await oneItem();
+    if (!paused) i++;
+    ui();
+  }
+  running = false;
+  status.textContent = "结束 ✅";
+}
+
+document.getElementById('start').onclick = ()=>{
+  list = clean(input.value);
+  if (!list.length){ status.textContent="请先输入内容"; return; }
+  i = 0; paused = false; ui();
+  if (!running) loop();
+};
+document.getElementById('pause').onclick = ()=>{ paused = true; ui(); audio.pause(); };
+document.getElementById('resume').onclick = ()=>{ paused = false; ui(); audio.play().catch(()=>{}); };
+document.getElementById('next').onclick = ()=>{ i = Math.min(i+1, list.length); audio.pause(); ui(); };
+document.getElementById('repeatOne').onclick = async ()=>{
+  if (!list[i]) return;
+  paused = false;
+  audio.pause();
+  await oneItem();
+};
+</script>
+</body>
+</html>
